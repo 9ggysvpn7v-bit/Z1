@@ -2,3 +2,5 @@ bot.db
 .env
 __pycache__/
 .venv/
+photo/
+data/

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Поиск по фото</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1c1f24; --muted:#6b7280; --accent:#2563eb; --line:#e5e7eb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14161a; --card:#1d2026; --text:#e8eaed; --muted:#9aa3af; --accent:#5b8def; --line:#2c313a; }
+  }
+  * { box-sizing:border-box }
+  body { margin:0; font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text) }
+  header { position:sticky; top:0; z-index:5; background:var(--bg); border-bottom:1px solid var(--line); padding:14px 16px }
+  .bar { max-width:1200px; margin:0 auto; display:flex; gap:8px; flex-wrap:wrap; align-items:center }
+  h1 { font-size:18px; margin:0 12px 0 0 }
+  input[type=search] { flex:1 1 280px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--text); font-size:15px }
+  button, label.btn { padding:10px 14px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--text); cursor:pointer; font-size:14px }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff }
+  button:disabled { opacity:.55; cursor:default }
+  main { max-width:1200px; margin:0 auto; padding:16px }
+  #info { color:var(--muted); font-size:13px; margin-bottom:10px }
+  .warn { background:#fef3c7; color:#78350f; border:1px solid #fcd34d; padding:8px 12px; border-radius:8px; margin-bottom:12px; font-size:13px }
+  progress { width:100%; height:8px; margin:6px 0 }
+  #grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px }
+  figure { margin:0; background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden }
+  figure img { display:block; width:100%; aspect-ratio:4/3; object-fit:cover; cursor:zoom-in; background:var(--line) }
+  figcaption { padding:6px 10px; font-size:12px; color:var(--muted); display:flex; justify-content:space-between; gap:8px }
+  figcaption span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  figcaption a { color:var(--accent); text-decoration:none; white-space:nowrap }
+  #empty { color:var(--muted); text-align:center; padding:48px 0 }
+  dialog { border:0; padding:0; background:transparent; max-width:95vw; max-height:95vh }
+  dialog::backdrop { background:rgba(0,0,0,.8) }
+  dialog img { max-width:95vw; max-height:90vh; border-radius:6px; display:block }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1>📷 Поиск по фото</h1>
+    <input id="q" type="search" placeholder="Например: красный закат, собака на пляже…" autofocus>
+    <button id="go" class="primary">Найти</button>
+    <label class="btn" title="Найти похожие на загруженную картинку">🖼 По фото<input id="file" type="file" accept="image/*" hidden></label>
+    <button id="reindex">↻ Переиндексировать</button>
+  </div>
+</header>
+<main>
+  <div id="warn" class="warn" hidden></div>
+  <div id="progress" hidden><progress id="bar" max="1" value="0"></progress><div id="ptext" class="muted"></div></div>
+  <div id="info"></div>
+  <div id="grid"></div>
+  <div id="empty" hidden></div>
+</main>
+<dialog id="dlg"><img id="big" alt=""></dialog>
+
+<script>
+const $ = id => document.getElementById(id);
+const enc = p => p.split('/').map(encodeURIComponent).join('/');
+let poll = null;
+
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  return r.json();
+}
+
+function render(results, message, title) {
+  const grid = $('grid'); grid.replaceChildren();
+  $('empty').hidden = results.length > 0;
+  $('empty').textContent = message || 'Ничего не найдено';
+  $('info').textContent = results.length ? `${title}: ${results.length}` : '';
+  for (const r of results) {
+    const f = document.createElement('figure');
+    const img = new Image(); img.loading = 'lazy'; img.alt = r.path; img.src = '/thumb/' + enc(r.path);
+    img.onclick = () => { $('big').src = '/photo/' + enc(r.path); $('dlg').showModal(); };
+    const cap = document.createElement('figcaption');
+    const name = document.createElement('span'); name.textContent = r.path; name.title = r.path;
+    const sc = document.createElement('a'); sc.href = '/photo/' + enc(r.path); sc.target = '_blank';
+    sc.textContent = Math.round(r.score * 100) + '%'; sc.title = 'Открыть оригинал';
+    cap.append(name, sc); f.append(img, cap); grid.append(f);
+  }
+}
+
+async function search() {
+  const q = $('q').value.trim(); if (!q) return;
+  try {
+    const d = await api('/api/search?q=' + encodeURIComponent(q));
+    render(d.results, d.message, 'Найдено');
+  } catch (e) { render([], 'Ошибка: ' + e.message); }
+}
+
+async function searchImage(file) {
+  const fd = new FormData(); fd.append('file', file);
+  try {
+    const d = await api('/api/search/image', { method: 'POST', body: fd });
+    render(d.results, d.message, 'Похожих');
+  } catch (e) { render([], 'Ошибка: ' + e.message); }
+  $('file').value = '';
+}
+
+async function refreshStatus() {
+  const s = await api('/api/status');
+  $('warn').hidden = !s.warning && s.photo_dir_exists;
+  $('warn').textContent = s.warning || (s.photo_dir_exists ? '' : `Папка не найдена: ${s.photo_dir}`);
+  $('reindex').disabled = s.running;
+  $('progress').hidden = !s.running;
+  if (s.running) {
+    $('bar').max = Math.max(s.total, 1); $('bar').value = s.done;
+    $('ptext').textContent = `Индексация: ${s.done} / ${s.total}`;
+  }
+  const parts = [`В индексе: ${s.indexed} фото`, `режим: ${s.embedder}`];
+  if (!s.running && s.last_finished) {
+    parts.push(`последняя индексация: +${s.added} новых, ${s.updated} обновлено, −${s.removed} удалено, ${s.skipped} без изменений`);
+    if (s.failed.length) parts.push(`не прочитаны: ${s.failed.join(', ')}`);
+    if (s.error) parts.push('ошибка: ' + s.error);
+  }
+  if (!$('grid').children.length) $('info').textContent = parts.join(' · ');
+  if (!s.running && poll) { clearInterval(poll); poll = null; }
+  return s;
+}
+
+function watch() { if (!poll) poll = setInterval(refreshStatus, 700); }
+
+$('reindex').onclick = async () => {
+  $('reindex').disabled = true;
+  await api('/api/reindex', { method: 'POST' });
+  await refreshStatus(); watch();
+};
+$('go').onclick = search;
+$('q').addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+$('file').onchange = e => e.target.files[0] && searchImage(e.target.files[0]);
+$('dlg').onclick = () => $('dlg').close();
+
+refreshStatus().then(s => { if (s.running) watch(); });
+</script>
+</body>
+</html>

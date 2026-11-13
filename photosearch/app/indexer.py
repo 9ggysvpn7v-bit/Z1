@@ -1,0 +1,146 @@
+"""Сканирование папки с фото и синхронизация с ChromaDB (инкрементально)."""
+from __future__ import annotations
+
+import threading
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import chromadb
+
+from .embedders import Embedder
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
+BATCH = 16
+
+
+def scan_photos(root: Path) -> dict[str, Path]:
+    """{относительный posix-путь: абсолютный путь} для всех картинок."""
+    root = root.resolve()
+    found: dict[str, Path] = {}
+    if not root.is_dir():
+        return found
+    for p in sorted(root.rglob("*")):
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTS and not p.name.startswith("."):
+            found[p.relative_to(root).as_posix()] = p
+    return found
+
+
+@dataclass
+class IndexState:
+    running: bool = False
+    done: int = 0
+    total: int = 0
+    added: int = 0
+    updated: int = 0
+    removed: int = 0
+    skipped: int = 0
+    failed: list[str] = field(default_factory=list)
+    error: str | None = None
+    last_finished: float | None = None
+
+
+class PhotoIndex:
+    def __init__(self, photo_dir: Path, data_dir: Path, embedder: Embedder, warning: str | None = None):
+        self.photo_dir = Path(photo_dir)
+        self.embedder = embedder
+        self.warning = warning
+        self.client = chromadb.PersistentClient(path=str(Path(data_dir) / "chroma"))
+        # отдельная коллекция на эмбеддер: размерности векторов не смешиваются
+        self.collection = self.client.get_or_create_collection(
+            f"photos_{embedder.name}", metadata={"hnsw:space": "cosine"}
+        )
+        self.state = IndexState()
+        self._lock = threading.Lock()
+
+    # -- индексация --
+    def start_reindex(self, full: bool = False) -> bool:
+        """Запускает фоновую переиндексацию. False, если она уже идёт."""
+        with self._lock:
+            if self.state.running:
+                return False
+            self.state = IndexState(running=True)
+        threading.Thread(target=self._run, args=(full,), daemon=True).start()
+        return True
+
+    def reindex_sync(self, full: bool = False) -> IndexState:
+        if self.start_reindex(full):
+            while self.state.running:
+                threading.Event().wait(0.02)
+        return self.state
+
+    def _run(self, full: bool) -> None:
+        import time
+
+        st = self.state
+        try:
+            files = scan_photos(self.photo_dir)
+            existing = self.collection.get(include=["metadatas"])
+            known = {i: m for i, m in zip(existing["ids"], existing["metadatas"])}
+
+            stale = [i for i in known if i not in files]
+            if stale:
+                self.collection.delete(ids=stale)
+                st.removed = len(stale)
+
+            todo: list[tuple[str, Path, int, int]] = []
+            for rel, p in files.items():
+                s = p.stat()
+                sig = (s.st_mtime_ns, s.st_size)
+                m = known.get(rel)
+                if not full and m and (m.get("mtime_ns"), m.get("size")) == sig:
+                    st.skipped += 1
+                else:
+                    todo.append((rel, p, *sig))
+            st.total = len(todo)
+
+            for i in range(0, len(todo), BATCH):
+                chunk = todo[i:i + BATCH]
+                vecs = self.embedder.embed_images([c[1] for c in chunk])
+                ids, embs, metas = [], [], []
+                for (rel, _p, mt, size), v in zip(chunk, vecs):
+                    if v is None:
+                        st.failed.append(rel)
+                        continue
+                    ids.append(rel)
+                    embs.append(v)
+                    metas.append({"mtime_ns": mt, "size": size})
+                    if rel in known:
+                        st.updated += 1
+                    else:
+                        st.added += 1
+                if ids:
+                    self.collection.upsert(ids=ids, embeddings=embs, metadatas=metas)
+                st.done += len(chunk)
+        except Exception as exc:  # показываем причину в UI
+            st.error = f"{type(exc).__name__}: {exc}"
+        finally:
+            st.last_finished = time.time()
+            st.running = False
+
+    # -- поиск --
+    def _query(self, vec: list[float], limit: int) -> list[dict]:
+        n = self.collection.count()
+        if n == 0:
+            return []
+        res = self.collection.query(query_embeddings=[vec], n_results=min(limit, n))
+        return [
+            {"path": i, "score": round(1 - d, 4)}
+            for i, d in zip(res["ids"][0], res["distances"][0])
+        ]
+
+    def search_text(self, text: str, limit: int = 24) -> list[dict]:
+        return self._query(self.embedder.embed_text(text), limit)
+
+    def search_image(self, path: Path, limit: int = 24) -> list[dict]:
+        vec = self.embedder.embed_images([path])[0]
+        if vec is None:
+            raise ValueError("Не удалось прочитать изображение")
+        return self._query(vec, limit)
+
+    def resolve(self, rel: str) -> Path | None:
+        """Безопасно превращает относительный путь в файл внутри папки с фото."""
+        root = self.photo_dir.resolve()
+        p = (root / rel).resolve()
+        if root in p.parents and p.is_file() and p.suffix.lower() in IMAGE_EXTS:
+            return p
+        return None
