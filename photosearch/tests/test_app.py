@@ -31,7 +31,7 @@ def index(photos, tmp_path):
 
 @pytest.fixture
 def client(photos, tmp_path):
-    app = create_app(photos, tmp_path / "data", ColorEmbedder(), auto_index=False)
+    app = create_app(photos, tmp_path / "data", ColorEmbedder(), auto_index=False, faces=None)
     with TestClient(app) as c:
         c.app_index = app.state.index
         yield c

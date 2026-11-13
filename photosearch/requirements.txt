@@ -6,3 +6,7 @@ pillow>=10
 python-multipart>=0.0.9
 pytest>=8
 httpx>=0.27
+# поиск по лицам (dlib-bin — готовая сборка dlib, компилятор не нужен)
+dlib-bin>=19.24
+face_recognition_models>=0.3
+numpy>=1.24
