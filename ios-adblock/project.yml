@@ -1,0 +1,35 @@
+# Генерация Xcode-проекта:  brew install xcodegen && xcodegen
+name: ZeroAds
+options:
+  bundleIdPrefix: com.example        # замените на свой, напр. com.yourname
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    DEVELOPMENT_TEAM: ""             # ваш Team ID (Xcode → Settings → Accounts)
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  ZeroAds:
+    type: application
+    platform: iOS
+    sources: [ZeroAds]
+    dependencies:
+      - target: ZeroAdsBlocker
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.zeroads
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: ZeroAds
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+  ZeroAdsBlocker:
+    type: app-extension
+    platform: iOS
+    sources: [ZeroAdsBlocker]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.zeroads.Blocker
+        INFOPLIST_FILE: ZeroAdsBlocker/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
