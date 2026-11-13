@@ -1,0 +1,27 @@
+# CSS-селекторы рекламных блоков, которые нужно скрыть на всех сайтах.
+.adsbygoogle
+ins.adsbygoogle
+[id^="google_ads_"]
+[id^="div-gpt-ad"]
+[data-ad-slot]
+[data-ad-client]
+iframe[src*="doubleclick.net"]
+iframe[src*="googlesyndication"]
+.ad-banner
+.ad-container
+.ad-wrapper
+.ad-slot
+.ad-unit
+.advert
+.advertisement
+.banner-ad
+.sponsored
+.sponsored-content
+.taboola
+.OUTBRAIN
+[id^="taboola-"]
+[class*="adfox"]
+[id^="adfox_"]
+[id^="yandex_rtb"]
+[id^="yandex_ad"]
+.yandex-adv
